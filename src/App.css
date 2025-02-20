@@ -1,0 +1,15 @@
+.top-bar {
+  flex: 0; /* TopBar only takes up as much space as it needs */
+}
+
+.flow-container {
+  flex: 1; /* Flow takes up the remaining space */
+  overflow: auto;
+  background-color: whitesmoke; /* Enables scrolling if Flow content overflows */
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh; /* Full viewport height */
+}
