@@ -3,7 +3,6 @@ import ReactDOM from "react-dom";
 
 export function ShadowDom({
   parentElement,
-  //parentElement,
   position = "beforeend",
   children,
 }: {
@@ -13,25 +12,18 @@ export function ShadowDom({
 }) {
   const [shadowHost] = React.useState(() => {
     const host = document.createElement("my-shadow-host");
+    // Remove the explicit styling that makes it a red square
     host.style.position = "fixed";
     host.style.top = "0";
     host.style.right = "0";
     host.style.zIndex = "9999";
-    host.style.backgroundColor = "red";
-    host.style.width = "200px";
-    host.style.height = "100px";
-    // Optional: set width/height or other styling if needed
+    // Removed background-color: red
+    // Let the child components control their own dimensions
     return host;
   });
 
-  /*
-  const [shadowHost] = React.useState(() =>
-    document.createElement("my-shadow-host")
-  );
-  */
-
-  const [shadowRoot] = React.useState(
-    () => shadowHost.attachShadow({ mode: "open" }) // set to open for debugging
+  const [shadowRoot] = React.useState(() =>
+    shadowHost.attachShadow({ mode: "open" })
   );
 
   React.useLayoutEffect(() => {
@@ -39,12 +31,30 @@ export function ShadowDom({
       console.log("Inserting shadow host into parent:", parentElement);
       parentElement.insertAdjacentElement(position, shadowHost);
 
-      // Inject the stylesheet for Tailwind/shadcn components
+      // Create a container for styles
+      const styleContainer = document.createElement("div");
+      shadowRoot.appendChild(styleContainer);
+
+      // Inject Tailwind styles
       const linkElem = document.createElement("link");
       linkElem.setAttribute("rel", "stylesheet");
-      // Use chrome.runtime.getURL to reference the CSS file in your extension:
       linkElem.setAttribute("href", chrome.runtime.getURL("index.css"));
-      shadowRoot.appendChild(linkElem);
+      styleContainer.appendChild(linkElem);
+
+      // Add an additional style element for any Shadow DOM specific styles
+      const styleElem = document.createElement("style");
+      styleElem.textContent = `
+        /* Reset some basics for Shadow DOM */
+        :host {
+          all: initial;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+        /* Allow Tailwind to work properly in Shadow DOM */
+        * {
+          box-sizing: border-box;
+        }
+      `;
+      styleContainer.appendChild(styleElem);
     } else {
       console.error("Parent element not found!");
     }

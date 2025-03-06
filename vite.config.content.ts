@@ -18,5 +18,7 @@ export default defineConfig({
         manualChunks: undefined, // Disable code splitting
       },
     },
+    // Make sure to copy the CSS file to the output directory
+    assetsInlineLimit: 0,
   },
 });

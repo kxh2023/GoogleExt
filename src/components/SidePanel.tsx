@@ -1,36 +1,17 @@
-import "../index.css";
-import { Button } from "./ui/button";
+import React from "react";
+import { Button } from "./ui/button"; // Assuming you have shadcn components
 
-const SidePanel = () => {
-  // Handler to inject the div into the active tab
-  const handleCreateDiv = () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0];
-      if (tab?.id) {
-        chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ["injectDiv.js"],
-        });
-      }
-    });
-  };
-
+const SidePanel: React.FC = () => {
   return (
-    <div className="panel">
-      <div className="fixed right-0 top-0 h-full w-64 bg-card shadow-lg p-4">
-        <h2 className="text-xl font-bold mb-4">OverReleaf AI</h2>
-        <Button variant="default" className="w-full mb-2 h-10 font-medium">
-          Read Text
-        </Button>
-        <Button variant="default" className="w-full mb-2 h-10 font-medium">
-          Write Text
-        </Button>
-        <Button
-          variant="default"
-          className="w-full mb-2 h-10 font-medium"
-          onClick={handleCreateDiv}
-        >
-          Create Div
+    <div className="fixed top-0 right-0 h-screen w-64 bg-white dark:bg-slate-800 shadow-lg p-4 z-50 overflow-y-auto">
+      <h2 className="text-xl font-bold mb-4 dark:text-white">Side Panel</h2>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          This panel is rendered in a Shadow DOM
+        </p>
+        <Button variant="default">Primary Button</Button>
+        <Button variant="outline" className="mt-2">
+          Secondary Button
         </Button>
       </div>
     </div>
