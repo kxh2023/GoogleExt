@@ -2,7 +2,7 @@
 //import SidePanel from "./components/SidePanel";
 // Import the readOverleafText function (adjust the path if needed)
 //import { createRoot } from "react-dom/client";
-import ChatPanel from "./components/ChatPanel";
+import ChatPanel from "./components/chatpanel/ChatPanel";
 
 function App() {
   //const [overleafText] = useState("");

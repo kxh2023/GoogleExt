@@ -1,69 +1,85 @@
+// ShadowDom.tsx
 import React from "react";
 import ReactDOM from "react-dom";
+import { baseStyles } from "./shadowdomstyles"; // Import the styles
 
 export function ShadowDom({
   parentElement,
   position = "beforeend",
   children,
+  styles, // Accept styles as a prop
 }: {
   parentElement: Element;
   position?: InsertPosition;
   children: React.ReactNode;
+  styles?: string; // CSS as a string
 }) {
   const [shadowHost] = React.useState(() => {
+    console.log("Creating shadow host element");
     const host = document.createElement("my-shadow-host");
-    // Remove the explicit styling that makes it a red square
+    // Important: Set position to fixed and make sure it doesn't cover the whole page
     host.style.position = "fixed";
     host.style.top = "0";
     host.style.right = "0";
+    host.style.bottom = "0"; // Make it full height
+    host.style.width = "auto"; // Let the content determine width
     host.style.zIndex = "9999";
-    // Removed background-color: red
-    // Let the child components control their own dimensions
+    host.style.overflow = "visible"; // Ensure content doesn't get cut off
     return host;
   });
 
-  const [shadowRoot] = React.useState(() =>
-    shadowHost.attachShadow({ mode: "open" })
-  );
+  const [shadowRoot] = React.useState(() => {
+    console.log("Attaching shadow root");
+    return shadowHost.attachShadow({ mode: "open" });
+  });
 
   React.useLayoutEffect(() => {
     if (parentElement) {
       console.log("Inserting shadow host into parent:", parentElement);
       parentElement.insertAdjacentElement(position, shadowHost);
 
-      // Create a container for styles
-      const styleContainer = document.createElement("div");
-      shadowRoot.appendChild(styleContainer);
+      // Create and add the base style element using imported styles
+      const baseStyleElement = document.createElement("style");
+      baseStyleElement.textContent = baseStyles;
+      shadowRoot.appendChild(baseStyleElement);
+      console.log("Base styles added to shadow DOM");
 
-      // Inject Tailwind styles
-      const linkElem = document.createElement("link");
-      linkElem.setAttribute("rel", "stylesheet");
-      linkElem.setAttribute("href", chrome.runtime.getURL("index.css"));
-      styleContainer.appendChild(linkElem);
+      // Add tailwind styles if provided
+      if (styles) {
+        console.log("Inline styles provided, length:", styles.length);
+        const tailwindStyleElement = document.createElement("style");
+        tailwindStyleElement.textContent = styles;
+        shadowRoot.appendChild(tailwindStyleElement);
+        console.log("Tailwind styles added to shadow DOM");
+      }
 
-      // Add an additional style element for any Shadow DOM specific styles
-      const styleElem = document.createElement("style");
-      styleElem.textContent = `
-        /* Reset some basics for Shadow DOM */
-        :host {
-          all: initial;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-        }
-        /* Allow Tailwind to work properly in Shadow DOM */
-        * {
-          box-sizing: border-box;
-        }
-      `;
-      styleContainer.appendChild(styleElem);
-    } else {
-      console.error("Parent element not found!");
+      // As a fallback, also load styles via link
+      try {
+        console.log("Adding link element as fallback");
+        const linkElem = document.createElement("link");
+        linkElem.setAttribute("rel", "stylesheet");
+        linkElem.setAttribute("href", chrome.runtime.getURL("index.css"));
+        shadowRoot.appendChild(linkElem);
+        console.log("Link element added");
+      } catch (linkError) {
+        console.error("Error adding link element:", linkError);
+      }
+
+      // Add debugging element to check if shadow DOM is working
+      const debugElement = document.createElement("div");
+      debugElement.textContent = "Shadow DOM Loaded";
+      debugElement.style.cssText =
+        "position: absolute; top: 0; left: -150px; background: gray; color: white; padding: 5px; font-size: 12px; z-index: 10000; opacity: 0.7;";
+      shadowRoot.appendChild(debugElement);
     }
 
     return () => {
-      console.log("Removing shadow host");
+      console.log("Cleanup: Removing shadow host");
       shadowHost.remove();
     };
-  }, [parentElement, shadowHost, position, shadowRoot]);
+  }, [parentElement, shadowHost, position, shadowRoot, styles]);
 
+  // Log rendering
+  console.log("Rendering children into shadow DOM");
   return ReactDOM.createPortal(children, shadowRoot);
 }

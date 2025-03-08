@@ -1,5 +1,5 @@
 import "../index.css";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 
 const SidePanel = () => {
   return (
