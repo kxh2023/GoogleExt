@@ -10,7 +10,7 @@ const SidePanel: React.FC = () => {
           This panel is rendered in a Shadow DOM
         </p>
         <Button variant="default">Primary Button</Button>
-        <Button variant="outline" className="mt-2">
+        <Button variant="default" className="mt-2">
           Secondary Button
         </Button>
       </div>
