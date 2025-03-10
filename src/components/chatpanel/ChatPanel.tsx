@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { SingleUserMsgBox } from "./chatpanelcomp/singleusermsgbox";
 import { SingleResponseMsgBox } from "./chatpanelcomp/singleresponsemsgbox";
 import { EnhancedMessageBox } from "./chatpanelcomp/messagebox";
+import LatexPrintButton from "../editor/DocumentReaderButton";
 
 interface Message {
   id: string;
@@ -166,6 +167,8 @@ export function ChatPanel({
       <div className="sticky bottom-0 w-full p-4 pt-6 bg-gray-50 border-t border-gray-200 shadow-sm">
         <EnhancedMessageBox onSendMessage={handleSendMessage} />
       </div>
+
+      <LatexPrintButton />
 
       {/* New message indicator (shows when user has scrolled up) */}
       {showNewMessageButton && (
