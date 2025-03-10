@@ -22,6 +22,15 @@ export interface DocumentContent {
   timestamp: number;
 }
 
+export const Tags = {
+  observationInterval: 100, // ms between checking for editor changes
+  editorSelector: ".cm-content",
+  lineSelector: ".cm-line",
+  cursorSelector: ".cm-cursor",
+  selectionSelector: ".cm-selectionBackground",
+  editorWrapperSelector: ".cm-editor",
+};
+
 // Create a class to handle document reading
 export class DocumentReader {
   private editor: Element | null = null;
