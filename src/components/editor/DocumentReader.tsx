@@ -1,462 +1,736 @@
-// DocumentReader.ts - Auto-scrolling only when button is pressed
+// DocumentReader.ts - CodeMirror API with scrolling fallback
 import { debounce } from "lodash";
 
-// Types for the document content
-export interface DocumentToken {
-  type: string; // keyword, punctuation, string, etc.
-  text: string;
-  element?: HTMLElement;
-}
-
-export interface DocumentLine {
-  lineNumber: number;
-  tokens: DocumentToken[];
-  rawText: string;
-  element: HTMLElement;
-}
-
+// Simplified DocumentContent interface
 export interface DocumentContent {
-  lines: DocumentLine[];
   rawText: string;
-  latexSource: string; // Pure LaTeX without HTML/DOM elements
   timestamp: number;
 }
-
-export const Tags = {
-  observationInterval: 100, // ms between checking for editor changes
-  editorSelector: ".cm-content",
-  lineSelector: ".cm-line",
-  cursorSelector: ".cm-cursor",
-  selectionSelector: ".cm-selectionBackground",
-  editorWrapperSelector: ".cm-editor",
-  scrollerSelector: ".cm-scroller",
-  gutterSelector: ".cm-gutters",
-};
 
 // Create a class to handle document reading
 export class DocumentReader {
   private editor: Element | null = null;
-  private scroller: Element | null = null;
-  private lastContent: DocumentContent | null = null;
+  private scrollContainer: Element | null = null;
   private documentCache: string | null = null;
   private changeListeners: ((content: DocumentContent) => void)[] = [];
-  private isCapturingFullDocument = false;
+  private lastContent: DocumentContent | null = null;
+  private tempTextArea: HTMLTextAreaElement | null = null;
+  private isCapturing: boolean = false;
+  private codeMirrorInstance: any = null; // CodeMirror instance
 
   constructor() {
-    this.setupListeners = this.setupListeners.bind(this);
-    this.readDocument = this.readDocument.bind(this);
     this.handleDocumentChange = debounce(
       this.handleDocumentChange.bind(this),
       300
     );
+
+    // Create a hidden textarea for clipboard operations
+    this.createHiddenTextArea();
+  }
+
+  // Create a hidden textarea for clipboard operations
+  private createHiddenTextArea(): void {
+    // Remove existing textarea if any
+    const existingTextArea = document.getElementById(
+      "document-reader-clipboard"
+    );
+    if (existingTextArea) {
+      existingTextArea.remove();
+    }
+
+    // Create new textarea
+    this.tempTextArea = document.createElement("textarea");
+    this.tempTextArea.id = "document-reader-clipboard";
+    this.tempTextArea.style.position = "fixed";
+    this.tempTextArea.style.top = "-9999px";
+    this.tempTextArea.style.left = "-9999px";
+    this.tempTextArea.style.width = "2px";
+    this.tempTextArea.style.height = "2px";
+    this.tempTextArea.style.opacity = "0";
+    document.body.appendChild(this.tempTextArea);
+
+    console.log(
+      "DocumentReader: Created hidden textarea for clipboard operations"
+    );
   }
 
   // Initialize the document reader with the editor element
-  initialize(editorSelector: string = ".cm-content"): boolean {
-    this.editor = document.querySelector(editorSelector);
-    this.scroller = document.querySelector(Tags.scrollerSelector);
+  initialize(): boolean {
+    // Try to get CodeMirror instance directly from Overleaf
+    try {
+      // @ts-ignore
+      if (window._ide && window._ide.editorManager) {
+        // @ts-ignore
+        const cm = window._ide.editorManager.getCurrentEditor()?.codeMirror;
+        if (cm) {
+          this.codeMirrorInstance = cm;
+          console.log(
+            "DocumentReader: Found CodeMirror instance via Overleaf API",
+            cm
+          );
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "DocumentReader: Couldn't access CodeMirror via Overleaf API",
+        err
+      );
+    }
+
+    // Find the editor element
+    const editorSelectors = [
+      ".CodeMirror", // CodeMirror container
+      ".CodeMirror-code", // CodeMirror 5 code
+      ".cm-content", // CodeMirror 6
+      ".ace_text-input", // Ace Editor
+      ".monaco-editor .view-lines", // Monaco
+      "#editor-content", // Generic
+      "#editor", // Generic
+    ];
+
+    for (const selector of editorSelectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        this.editor = element;
+        console.log(
+          `DocumentReader: Found editor with selector "${selector}"`,
+          element
+        );
+
+        // Try to get CodeMirror instance from DOM element
+        if (!this.codeMirrorInstance && selector === ".CodeMirror") {
+          try {
+            // @ts-ignore
+            const cm = element.CodeMirror;
+            if (cm) {
+              this.codeMirrorInstance = cm;
+              console.log(
+                "DocumentReader: Found CodeMirror instance from DOM element",
+                cm
+              );
+            }
+          } catch (err) {
+            console.warn(
+              "DocumentReader: Couldn't get CodeMirror from DOM",
+              err
+            );
+          }
+        }
+
+        break;
+      }
+    }
 
     if (!this.editor) {
-      console.error("DocumentReader: Could not find editor element");
+      console.error("DocumentReader: Could not find any known editor element");
       return false;
     }
 
-    console.log("DocumentReader: Initialized with editor element", this.editor);
-    this.setupListeners();
+    // Find the scrollable container
+    const scrollSelectors = [
+      ".CodeMirror-scroll", // CodeMirror 5
+      ".cm-scroller", // CodeMirror 6
+      ".ace_scroller", // Ace Editor
+      ".monaco-scrollable-element", // Monaco
+      ".editor-scrollable", // Generic
+    ];
+
+    // First try explicit selectors
+    for (const selector of scrollSelectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        this.scrollContainer = element;
+        console.log(
+          `DocumentReader: Found scroll container with selector "${selector}"`,
+          element
+        );
+        break;
+      }
+    }
+
+    // If no container found, try parent elements of the editor
+    if (!this.scrollContainer && this.editor) {
+      let parent = this.editor.parentElement;
+      while (parent) {
+        if (
+          parent.scrollHeight > parent.clientHeight &&
+          getComputedStyle(parent).overflow !== "hidden"
+        ) {
+          this.scrollContainer = parent;
+          console.log("DocumentReader: Found scrollable parent", parent);
+          break;
+        }
+        parent = parent.parentElement;
+      }
+    }
+
+    // Set up listeners for document changes
+    document.addEventListener("keyup", this.handleDocumentChange);
+
     return true;
   }
 
-  // Set up mutation observers and other listeners
-  private setupListeners(): void {
-    if (!this.editor) return;
-
-    // Set up mutation observer to detect changes
-    const observer = new MutationObserver(() => {
-      this.handleDocumentChange();
-    });
-
-    observer.observe(this.editor, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: false,
-    });
-
-    // Listen for keyboard events as a backup
-    document.addEventListener("keyup", () => {
-      this.handleDocumentChange();
-    });
-
-    console.log("DocumentReader: Listeners set up");
-  }
-
-  // Extract token information from a span element
-  private extractToken(element: Element): DocumentToken {
-    // Get token type from class
-    const classList = element.classList;
-    let type = "text"; // default
-
-    if (classList.contains("tok-keyword")) type = "keyword";
-    else if (classList.contains("tok-punctuation")) type = "punctuation";
-    else if (classList.contains("tok-string")) type = "string";
-    else if (classList.contains("tok-typeName")) type = "typeName";
-    else if (classList.contains("tok-attributeValue")) type = "attributeValue";
-    else if (classList.contains("tok-literal")) type = "literal";
-
-    return {
-      type,
-      text: element.textContent || "",
-      element: element as HTMLElement,
-    };
-  }
-
-  // Process a line element to extract all tokens
-  private processLineElement(
-    lineElement: Element,
-    index: number
-  ): DocumentLine {
-    const tokens: DocumentToken[] = [];
-    let rawText = "";
-
-    // Check if this is an empty line with only BR
+  // Get document content via CodeMirror API
+  private getContentViaCodeMirrorAPI(): string | null {
+    // Direct CodeMirror instance
     if (
-      lineElement.childNodes.length === 1 &&
-      lineElement.childNodes[0].nodeName === "BR"
+      this.codeMirrorInstance &&
+      typeof this.codeMirrorInstance.getValue === "function"
     ) {
-      return {
-        lineNumber: index,
-        tokens: [],
-        rawText: "",
-        element: lineElement as HTMLElement,
-      };
+      try {
+        const content = this.codeMirrorInstance.getValue();
+        console.log(
+          `DocumentReader: Got content via CodeMirror API, length: ${content.length}`
+        );
+        return content;
+      } catch (err) {
+        console.warn(
+          "DocumentReader: Error getting content via CodeMirror API",
+          err
+        );
+      }
     }
 
-    // Process each child node
-    lineElement.childNodes.forEach((node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        // Plain text node
-        const text = node.textContent || "";
-        if (text) {
-          tokens.push({
-            type: "text",
-            text,
-          });
-          rawText += text;
-        }
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const element = node as Element;
-
-        // Skip widgets and fillers
-        if (
-          element.classList.contains("cm-widgetBuffer") ||
-          element.classList.contains("ol-cm-filler")
-        ) {
-          return;
-        }
-
-        // Check if it's a token element (span with tok-* class)
-        if (element.tagName === "SPAN" && element.className.includes("tok-")) {
-          const token = this.extractToken(element);
-          tokens.push(token);
-          rawText += token.text;
-        } else if (element.tagName === "BR") {
-          // Handle line breaks
-          tokens.push({
-            type: "linebreak",
-            text: "\n",
-          });
-          rawText += "\n";
-        } else {
-          // Other elements - recurse into children
-          element.childNodes.forEach((childNode) => {
-            if (childNode.nodeType === Node.TEXT_NODE) {
-              const text = childNode.textContent || "";
-              tokens.push({
-                type: "text",
-                text,
-              });
-              rawText += text;
-            } else if (childNode.nodeType === Node.ELEMENT_NODE) {
-              const childElement = childNode as Element;
-              if (
-                childElement.tagName === "SPAN" &&
-                childElement.className.includes("tok-")
-              ) {
-                const token = this.extractToken(childElement);
-                tokens.push(token);
-                rawText += token.text;
-              }
-            }
-          });
+    // Try Overleaf API
+    try {
+      // @ts-ignore
+      if (window._ide && window._ide.editorManager) {
+        // @ts-ignore
+        const docContent = window._ide.editorManager.getCurrentDocValue();
+        if (docContent) {
+          console.log(
+            `DocumentReader: Got content from Overleaf API, length: ${docContent.length}`
+          );
+          return docContent;
         }
       }
-    });
+    } catch (err) {
+      console.warn("DocumentReader: Couldn't access Overleaf API", err);
+    }
 
-    return {
-      lineNumber: index,
-      tokens,
-      rawText,
-      element: lineElement as HTMLElement,
-    };
+    return null;
   }
 
-  // Convert document to LaTeX source
-  /*private convertToLatexSource(lines: DocumentLine[]): string {
-    return lines.map((line) => line.rawText).join("\n");
-  }*/
-
-  // Get visible content from the current view
+  // Get content from visible lines
   private getVisibleContent(): string {
     if (!this.editor) {
       return "";
     }
 
-    const lines: DocumentLine[] = [];
-    const lineElements = this.editor.querySelectorAll(".cm-line");
-
-    // Process each visible line
-    lineElements.forEach((lineElement, index) => {
-      const line = this.processLineElement(lineElement, index);
-      lines.push(line);
-    });
-
-    // Create raw text with proper line breaks
-    return lines.map((line) => line.rawText).join("\n");
-  }
-
-  // Capture the full document by auto-scrolling
-  async captureFullDocument(): Promise<string> {
-    if (this.isCapturingFullDocument) {
-      // Already capturing, return existing cache if available
-      return this.documentCache || "";
-    }
-
-    // First check if we already have a cache
-    if (this.documentCache) {
-      return this.documentCache;
-    }
-
-    this.isCapturingFullDocument = true;
-
-    try {
-      // Try to access Overleaf's internal API first
-      try {
-        // @ts-ignore
-        if (window._ide && window._ide.editorManager) {
-          // @ts-ignore
-          const docContent = window._ide.editorManager.getCurrentDocValue();
-          if (docContent) {
-            console.log("Got full document from Overleaf API");
-            this.documentCache = docContent;
-            this.isCapturingFullDocument = false;
-            return docContent;
-          }
-        }
-      } catch (error) {
-        console.error("Error accessing Overleaf API:", error);
-      }
-
-      // If API access fails, use auto-scrolling technique
-      if (!this.scroller || !this.editor) {
-        this.isCapturingFullDocument = false;
-        return "";
-      }
-
-      // Save original scroll position
-      const originalScrollTop = this.scroller.scrollTop;
-      const maxScroll = this.scroller.scrollHeight;
-
-      // First scroll to top to start fresh
-      this.scroller.scrollTop = 0;
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Wait for render
-
-      // Initialize document content with top view
-      let fullContent = this.getVisibleContent();
-      let contentMap = new Map<number, string>();
-      contentMap.set(0, fullContent);
-
-      // Determine scroll step based on editor height
-      const scrollStep = Math.floor(this.scroller.clientHeight * 0.7); // 70% overlap
-      let currentScrollPos = 0;
-
-      console.log("Starting auto-scroll capture");
-
-      // Scroll through the document
-      while (currentScrollPos < maxScroll) {
-        // Move to next position
-        currentScrollPos += scrollStep;
-        if (currentScrollPos > maxScroll) {
-          currentScrollPos = maxScroll;
-        }
-
-        this.scroller.scrollTop = currentScrollPos;
-
-        // Wait for the content to render
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        // Get content at this position
-        const visibleContent = this.getVisibleContent();
-        contentMap.set(currentScrollPos, visibleContent);
-
-        // If we've reached the bottom, break
-        if (currentScrollPos >= maxScroll) {
-          break;
-        }
-      }
-
-      // Scroll back to original position
-      this.scroller.scrollTop = originalScrollTop;
-
-      // Merge all content chunks
-      let mergedContent = "";
-      let seenLines = new Set<string>();
-
-      // Sort by scroll position to ensure correct order
-      const sortedPositions = Array.from(contentMap.keys()).sort(
-        (a, b) => a - b
-      );
-
-      for (const pos of sortedPositions) {
-        const chunk = contentMap.get(pos) || "";
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          // Only add lines we haven't seen before (deduplication)
-          if (!seenLines.has(line)) {
-            if (mergedContent) {
-              mergedContent += "\n";
-            }
-            mergedContent += line;
-            seenLines.add(line);
-          }
-        }
-      }
-
-      console.log("Completed auto-scroll capture");
-
-      // Cache the result
-      this.documentCache = mergedContent;
-      return mergedContent;
-    } finally {
-      this.isCapturingFullDocument = false;
-    }
-  }
-
-  // Read the current state of the document - only returns what's visible unless cache is available
-  readVisibleDocument(): DocumentContent {
-    if (!this.editor) {
-      throw new Error("Editor element not found");
-    }
-
-    const visibleLines: DocumentLine[] = [];
-    const lineElements = this.editor.querySelectorAll(".cm-line");
-
-    lineElements.forEach((lineElement, index) => {
-      const line = this.processLineElement(lineElement, index);
-      visibleLines.push(line);
-    });
-
-    const rawText = visibleLines.map((line) => line.rawText).join("\n");
-
-    const content: DocumentContent = {
-      lines: visibleLines,
-      rawText,
-      latexSource: rawText,
-      timestamp: Date.now(),
-    };
-
-    this.lastContent = content;
-    return content;
-  }
-
-  // Read the document using the cache or capturing if requested
-  async readDocument(forceCapture: boolean = false): Promise<DocumentContent> {
-    // If we need to force a capture or don't have a cache yet
-    if (forceCapture || !this.documentCache) {
-      // Capture the full document (via API or auto-scrolling)
-      const contentText = await this.captureFullDocument();
-
-      // Create DocumentContent from the captured text
-      if (contentText) {
-        const lines = contentText.split("\n").map((lineText, index) => ({
-          lineNumber: index,
-          tokens: [{ type: "text", text: lineText }],
-          rawText: lineText,
-          element: document.createElement("div") as HTMLElement,
-        }));
-
-        const content: DocumentContent = {
-          lines,
-          rawText: contentText,
-          latexSource: contentText,
-          timestamp: Date.now(),
-        };
-
-        this.lastContent = content;
-        return content;
-      }
-    }
-    // If we have a cache and aren't forcing a capture
-    else if (this.documentCache) {
-      // Use the cached content
-      const lines = this.documentCache.split("\n").map((lineText, index) => ({
-        lineNumber: index,
-        tokens: [{ type: "text", text: lineText }],
-        rawText: lineText,
-        element: document.createElement("div") as HTMLElement,
-      }));
-
-      const content: DocumentContent = {
-        lines,
-        rawText: this.documentCache,
-        latexSource: this.documentCache,
-        timestamp: Date.now(),
-      };
-
-      this.lastContent = content;
+    // For CodeMirror 5
+    const cmLines = this.editor.querySelectorAll(".CodeMirror-line");
+    if (cmLines.length > 0) {
+      const content = Array.from(cmLines)
+        .map((line) => line.textContent || "")
+        .join("\n");
       return content;
     }
 
-    // Fallback to just visible content
-    return this.readVisibleDocument();
+    // For CodeMirror 6
+    const cm6Lines = this.editor.querySelectorAll(".cm-line");
+    if (cm6Lines.length > 0) {
+      const content = Array.from(cm6Lines)
+        .map((line) => line.textContent || "")
+        .join("\n");
+      return content;
+    }
+
+    // Fallback to textContent
+    return this.editor.textContent || "";
+  }
+
+  // Scroll to a specific line
+  private async scrollToLine(line: number): Promise<void> {
+    if (!this.codeMirrorInstance) {
+      console.warn("DocumentReader: No CodeMirror instance for scrolling");
+      return;
+    }
+
+    try {
+      // Get line position
+      const linePos = this.codeMirrorInstance.heightAtLine(line, "local");
+
+      // Scroll to position
+      this.codeMirrorInstance.scrollTo(null, linePos);
+
+      // Wait for render
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } catch (err) {
+      console.warn(`DocumentReader: Error scrolling to line ${line}`, err);
+    }
+  }
+
+  // Scroll to a specific position
+  private async scrollTo(position: number): Promise<void> {
+    if (!this.scrollContainer) {
+      console.warn("DocumentReader: No scroll container found");
+      return;
+    }
+
+    console.log(`DocumentReader: Scrolling to position ${position}`);
+    this.scrollContainer.scrollTop = position;
+
+    // Wait for render
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  // Get line count via CodeMirror API
+  private getLineCount(): number {
+    if (
+      this.codeMirrorInstance &&
+      typeof this.codeMirrorInstance.lineCount === "function"
+    ) {
+      try {
+        return this.codeMirrorInstance.lineCount();
+      } catch (err) {
+        console.warn("DocumentReader: Error getting line count", err);
+      }
+    }
+    return 0;
+  }
+
+  // Process and clean duplicated content using CodeMirror line info if available
+  private cleanDuplicatedContent(content: string): string {
+    console.log("DocumentReader: Checking for duplicated content");
+
+    if (!content || content.length < 100) {
+      return content;
+    }
+
+    try {
+      // If we have CodeMirror instance, try to use its line information
+      if (
+        this.codeMirrorInstance &&
+        typeof this.codeMirrorInstance.lineCount === "function"
+      ) {
+        console.log("DocumentReader: Using CodeMirror API for line analysis");
+
+        // Get total line count from CodeMirror
+        const totalLines = this.codeMirrorInstance.lineCount();
+        console.log(
+          `DocumentReader: Document has ${totalLines} lines according to CodeMirror`
+        );
+
+        // Extract all lines using CodeMirror's getLine method
+        const cmLines: string[] = [];
+        for (let i = 0; i < totalLines; i++) {
+          cmLines.push(this.codeMirrorInstance.getLine(i) || "");
+        }
+
+        // Find sequences of repeated lines
+        const uniqueLines: string[] = [];
+        const seenBlocks = new Map<string, number>();
+
+        // Look for blocks of 20+ consecutive lines that repeat
+        const blockSize = 20;
+
+        for (let i = 0; i < cmLines.length - blockSize + 1; i++) {
+          // Create a fingerprint for this block
+          const blockContent = cmLines.slice(i, i + blockSize).join("\n");
+          const blockHash = this.hashString(blockContent);
+
+          if (seenBlocks.has(blockHash)) {
+            // This is a duplicate block - skip ahead
+            console.log(
+              `DocumentReader: Found duplicate block at line ${i} (matches line ${seenBlocks.get(
+                blockHash
+              )})`
+            );
+            i += blockSize - 1; // Skip the entire block
+          } else {
+            // This is a new block - add the first line to unique lines
+            uniqueLines.push(cmLines[i]);
+            seenBlocks.set(blockHash, i);
+          }
+        }
+
+        // Add any remaining lines
+        for (let i = cmLines.length - blockSize + 1; i < cmLines.length; i++) {
+          if (i > 0) uniqueLines.push(cmLines[i]);
+        }
+
+        console.log(
+          `DocumentReader: Reduced from ${cmLines.length} to ${uniqueLines.length} lines using CodeMirror block analysis`
+        );
+
+        // If we found duplicates, return the cleaned content
+        if (uniqueLines.length < cmLines.length) {
+          return uniqueLines.join("\n");
+        }
+      }
+
+      // Fallback to regular text analysis if CodeMirror isn't available or didn't find duplicates
+      // Split content into lines for easier analysis
+      const lines = content.split("\n");
+      const totalLines = lines.length;
+
+      console.log(
+        `DocumentReader: Analyzing ${totalLines} lines for duplication (text-based method)`
+      );
+
+      // Find sequences of repeated lines
+      const uniqueLines = [];
+      let i = 0;
+
+      while (i < totalLines) {
+        uniqueLines.push(lines[i]);
+
+        // Look for a duplicate of the current line
+        const currentLine = lines[i].trim();
+        if (currentLine.length > 10) {
+          // Only check substantial lines
+          // Find the next occurrence of this line
+          let nextOccurrence = -1;
+          for (let j = i + 1; j < totalLines; j++) {
+            if (lines[j].trim() === currentLine) {
+              nextOccurrence = j;
+              break;
+            }
+          }
+
+          // If we found a duplicate, check if it's part of a larger duplicated section
+          if (nextOccurrence > i + 1) {
+            // See how many lines match in sequence
+            let matchingLines = 1;
+            while (
+              i + matchingLines < nextOccurrence &&
+              nextOccurrence + matchingLines < totalLines &&
+              lines[i + matchingLines].trim() ===
+                lines[nextOccurrence + matchingLines].trim()
+            ) {
+              matchingLines++;
+            }
+
+            // If we have a substantial duplicate section, skip it
+            if (matchingLines >= 5) {
+              // At least 5 consecutive matching lines
+              console.log(
+                `DocumentReader: Found duplicate section of ${matchingLines} lines at line ${nextOccurrence}`
+              );
+              // Skip to after the original section (we'll skip the duplicate when we get there)
+              i += matchingLines;
+              continue;
+            }
+          }
+        }
+
+        i++;
+      }
+
+      // If we found duplicates, return the cleaned content
+      if (uniqueLines.length < totalLines) {
+        console.log(
+          `DocumentReader: Reduced from ${totalLines} to ${uniqueLines.length} lines using text-based analysis`
+        );
+        return uniqueLines.join("\n");
+      }
+    } catch (error) {
+      console.error(
+        "DocumentReader: Error cleaning duplicated content:",
+        error
+      );
+    }
+
+    return content;
+  }
+
+  // Simple string hashing function
+  private hashString(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.toString(16);
+  }
+
+  // Capture document by scrolling through it
+  async captureFullDocument(): Promise<string> {
+    if (this.isCapturing) {
+      console.log("DocumentReader: Already capturing, please wait");
+      return this.documentCache || "";
+    }
+
+    this.isCapturing = true;
+    console.log("DocumentReader: Starting full document capture");
+
+    try {
+      // Method 1: Try via API first (most reliable)
+      const apiContent = this.getContentViaCodeMirrorAPI();
+      if (apiContent) {
+        this.documentCache = apiContent;
+        return apiContent;
+      }
+
+      // Method 2: If we have CodeMirror and scrollContainer, use scrolling with API
+      if (this.codeMirrorInstance && this.scrollContainer) {
+        console.log("DocumentReader: Using CodeMirror-based scrolling capture");
+
+        // Get total line count
+        const lineCount = this.getLineCount();
+        if (lineCount > 0) {
+          console.log(`DocumentReader: Document has ${lineCount} lines`);
+
+          // Store original scroll position
+          const originalScrollInfo = this.codeMirrorInstance.getScrollInfo();
+          const originalScrollTop = originalScrollInfo.top;
+
+          // Scroll to top
+          await this.scrollToLine(0);
+
+          // Use the direct API first (now that we're at the top)
+          const fullContent = this.getContentViaCodeMirrorAPI();
+          if (fullContent) {
+            // Restore scroll position
+            this.codeMirrorInstance.scrollTo(null, originalScrollTop);
+            this.documentCache = fullContent;
+            return fullContent;
+          }
+
+          // Lines-based approach: get all lines
+          let allLines: string[] = [];
+
+          // Calculate viewport height in lines
+          const viewportLineCount = 50; // Estimate
+
+          // Create chunks with overlap
+          for (
+            let startLine = 0;
+            startLine < lineCount;
+            startLine += viewportLineCount
+          ) {
+            // Scroll to this line
+            await this.scrollToLine(startLine);
+
+            // Get visible content
+            const visibleContent = this.getVisibleContent();
+            const visibleLines = visibleContent.split("\n");
+
+            console.log(
+              `DocumentReader: Captured ${visibleLines.length} lines at line ${startLine}`
+            );
+
+            // Add to all lines (simple approach)
+            if (startLine === 0) {
+              allLines = visibleLines;
+            } else {
+              // Try to find overlap
+              let overlapFound = false;
+              for (let i = 10; i > 0; i--) {
+                // Check if last i lines of allLines match first i lines of visibleLines
+                if (allLines.length >= i) {
+                  const lastLines = allLines.slice(-i);
+                  const firstLines = visibleLines.slice(0, i);
+
+                  if (
+                    lastLines.every((line, index) => line === firstLines[index])
+                  ) {
+                    // Found overlap, add only new lines
+                    allLines = allLines.concat(visibleLines.slice(i));
+                    overlapFound = true;
+                    break;
+                  }
+                }
+              }
+
+              // If no overlap found, just append all
+              if (!overlapFound) {
+                allLines = allLines.concat(visibleLines);
+              }
+            }
+          }
+
+          // Restore original scroll position
+          this.codeMirrorInstance.scrollTo(null, originalScrollTop);
+
+          // Join all lines
+          const content = allLines.join("\n");
+          console.log(
+            `DocumentReader: Assembled document of ${allLines.length} lines`
+          );
+
+          this.documentCache = content;
+          return content;
+        }
+      }
+
+      // Method 3: Generic scrolling approach
+      if (this.scrollContainer) {
+        console.log("DocumentReader: Using generic scrolling capture");
+
+        // Store original scroll position
+        const originalScrollTop = this.scrollContainer.scrollTop;
+
+        // Get scroll metrics
+        const scrollHeight = this.scrollContainer.scrollHeight;
+        const clientHeight = this.scrollContainer.clientHeight;
+        const maxPosition = scrollHeight - clientHeight;
+
+        console.log(
+          `DocumentReader: Scroll height ${scrollHeight}, client height ${clientHeight}`
+        );
+
+        // Scroll to top
+        await this.scrollTo(0);
+
+        // Get content at different scroll positions
+        let allLines: string[] = [];
+        const visibleContent = this.getVisibleContent();
+        allLines = visibleContent.split("\n");
+
+        // Scroll and capture
+        const stepSize = Math.floor(clientHeight * 0.7); // 70% overlap
+        let position = stepSize;
+
+        while (position < maxPosition) {
+          await this.scrollTo(position);
+
+          const visibleContent = this.getVisibleContent();
+          const visibleLines = visibleContent.split("\n");
+
+          // Try to find overlap
+          let overlapFound = false;
+          for (let i = 10; i > 0; i--) {
+            if (allLines.length >= i) {
+              const lastLines = allLines.slice(-i);
+              const firstLines = visibleLines.slice(0, i);
+
+              if (
+                lastLines.every((line, index) => line === firstLines[index])
+              ) {
+                // Found overlap, add only new lines
+                allLines = allLines.concat(visibleLines.slice(i));
+                overlapFound = true;
+                console.log(
+                  `DocumentReader: Found ${i} lines overlap at position ${position}`
+                );
+                break;
+              }
+            }
+          }
+
+          // If no overlap found, just append all
+          if (!overlapFound) {
+            console.log(
+              `DocumentReader: No overlap found at position ${position}, adding all lines`
+            );
+            allLines = allLines.concat(visibleLines);
+          }
+
+          position += stepSize;
+          if (position > maxPosition) {
+            position = maxPosition;
+          }
+        }
+
+        // Restore scroll position
+        this.scrollContainer.scrollTop = originalScrollTop;
+
+        // Join all lines
+        const content = allLines.join("\n");
+        console.log(
+          `DocumentReader: Assembled document of ${allLines.length} lines`
+        );
+
+        this.documentCache = content;
+        return content;
+      }
+
+      // Method 4: Ask user to copy
+      return await this.askUserToCopy();
+    } catch (error) {
+      console.error("DocumentReader: Error during capture:", error);
+      return this.documentCache || "";
+    } finally {
+      this.isCapturing = false;
+    }
+  }
+
+  // Ask the user to manually copy content
+  private async askUserToCopy(): Promise<string> {
+    console.log("DocumentReader: Asking user to manually copy content");
+
+    const editorContainer =
+      this.editor?.closest(
+        ".editor-container, #editor-container, .CodeMirror"
+      ) || this.editor;
+    if (editorContainer) {
+      // Highlight the editor
+      const originalBorder =
+        editorContainer instanceof HTMLElement
+          ? editorContainer.style.border
+          : "";
+      if (editorContainer instanceof HTMLElement) {
+        editorContainer.style.border = "2px solid red";
+      }
+
+      // Clear the textarea
+      if (this.tempTextArea) {
+        this.tempTextArea.value = "";
+      }
+
+      // Show alert to user
+      alert(
+        "Please select all text in the editor (click in editor and press Ctrl+A), then copy it (Ctrl+C), then click OK"
+      );
+
+      // Restore original styling
+      if (editorContainer instanceof HTMLElement) {
+        editorContainer.style.border = originalBorder;
+      }
+
+      // Focus the hidden textarea
+      if (this.tempTextArea) {
+        this.tempTextArea.focus();
+
+        // Ask user to paste
+        alert("Now please paste the text (Ctrl+V) and click OK");
+
+        // Get the pasted content
+        const pastedContent = this.tempTextArea.value;
+        console.log(
+          `DocumentReader: Got manually pasted content, length: ${pastedContent.length}`
+        );
+        return pastedContent;
+      }
+    }
+
+    return "";
+  }
+
+  // Read the document (either from cache or by capturing)
+  async readDocument(forceCapture: boolean = false): Promise<DocumentContent> {
+    if (forceCapture || !this.documentCache) {
+      const text = await this.captureFullDocument();
+      // Clean duplicated content
+      const cleanedText = this.cleanDuplicatedContent(text);
+
+      console.log(
+        `DocumentReader: Original length: ${text.length}, cleaned length: ${cleanedText.length}`
+      );
+      const content: DocumentContent = {
+        rawText: cleanedText,
+        timestamp: Date.now(),
+      };
+
+      if (text && text.length > 0) {
+        this.lastContent = content;
+      }
+
+      return content;
+    } else {
+      return {
+        rawText: this.documentCache,
+        timestamp: Date.now(),
+      };
+    }
   }
 
   // Handle document change events
   private handleDocumentChange(): void {
-    try {
-      // Clear the cache when the document changes
-      this.documentCache = null;
-
-      // Just read visible content for mutation observers
-      const content = this.readVisibleDocument();
-
-      // Only notify if content actually changed
-      if (this.hasContentChanged(content)) {
-        console.log("DocumentReader: Document changed");
-        this.notifyChangeListeners(content);
-      }
-    } catch (error) {
-      console.error("DocumentReader: Error handling document change", error);
-    }
-  }
-
-  // Check if the content has changed significantly
-  private hasContentChanged(newContent: DocumentContent): boolean {
-    if (!this.lastContent) return true;
-
-    // Compare the raw text
-    return this.lastContent.rawText !== newContent.rawText;
-  }
-
-  // Send the content to all registered listeners
-  private notifyChangeListeners(content: DocumentContent): void {
-    this.changeListeners.forEach((listener) => {
-      try {
-        listener(content);
-      } catch (error) {
-        console.error("DocumentReader: Error in change listener", error);
-      }
-    });
+    // Clear the cache when the document changes
+    this.documentCache = null;
   }
 
   // Subscribe to document changes
@@ -472,6 +746,47 @@ export class DocumentReader {
   // Get the current document content
   getCurrentContent(): DocumentContent | null {
     return this.lastContent;
+  }
+
+  // Get cursor position if possible
+  getCursorPosition(): { line: number; character: number } | null {
+    // Try CodeMirror API
+    if (
+      this.codeMirrorInstance &&
+      typeof this.codeMirrorInstance.getCursor === "function"
+    ) {
+      try {
+        const cursor = this.codeMirrorInstance.getCursor();
+        return { line: cursor.line, character: cursor.ch };
+      } catch (err) {
+        console.warn(
+          "DocumentReader: Error getting cursor position via CodeMirror",
+          err
+        );
+      }
+    }
+
+    // Fallback to selection API
+    try {
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        if (range) {
+          // Simple implementation - just counts newlines before cursor
+          const preContent = range.startContainer.textContent || "";
+          const lines = preContent.split("\n");
+          return {
+            line: lines.length - 1,
+            character: lines[lines.length - 1].length,
+          };
+        }
+      }
+    } catch (error) {
+      console.error("Error getting cursor position:", error);
+    }
+
+    // Default fallback position
+    return { line: 0, character: 0 };
   }
 }
 
