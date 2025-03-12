@@ -3,7 +3,6 @@ import { SingleUserMsgBox } from "./chatpanelcomp/singleusermsgbox";
 import { SingleResponseMsgBox } from "./chatpanelcomp/singleresponsemsgbox";
 import { EnhancedMessageBox } from "./chatpanelcomp/messagebox";
 import LatexPrintButton from "../editor/DocumentReaderButton";
-import CursorTrackingButton from "../editor/DocumentReaderButton";
 
 interface Message {
   id: string;
@@ -170,7 +169,6 @@ export function ChatPanel({
       </div>
 
       <LatexPrintButton />
-      <CursorTrackingButton />
 
       {/* New message indicator (shows when user has scrolled up) */}
       {showNewMessageButton && (

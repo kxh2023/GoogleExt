@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import DocumentReaderInstance from "./DocumentReader";
 import DocumentCacheInstance from "./DocumentCache";
 import { Button } from "../ui/button";
+import CursorContextButton from "./CursorContextButton";
 
 const LatexPrintButton: React.FC = () => {
   const [isReaderInitialized, setIsReaderInitialized] = useState(false);
@@ -139,6 +140,8 @@ const LatexPrintButton: React.FC = () => {
           Clear Cache
         </Button>
       )}
+
+      <CursorContextButton />
 
       {/* Debug Panel */}
       <div className="mt-2 p-2 bg-gray-100 rounded shadow-lg text-xs max-h-60 overflow-y-auto w-80">

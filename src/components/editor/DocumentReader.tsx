@@ -16,7 +16,7 @@ export class DocumentReader {
   private lastContent: DocumentContent | null = null;
   private tempTextArea: HTMLTextAreaElement | null = null;
   private isCapturing: boolean = false;
-  private codeMirrorInstance: any = null; // CodeMirror instance
+  public codeMirrorInstance: any = null; // CodeMirror instance
 
   constructor() {
     this.handleDocumentChange = debounce(
@@ -748,45 +748,9 @@ export class DocumentReader {
     return this.lastContent;
   }
 
-  // Get cursor position if possible
-  getCursorPosition(): { line: number; character: number } | null {
-    // Try CodeMirror API
-    if (
-      this.codeMirrorInstance &&
-      typeof this.codeMirrorInstance.getCursor === "function"
-    ) {
-      try {
-        const cursor = this.codeMirrorInstance.getCursor();
-        return { line: cursor.line, character: cursor.ch };
-      } catch (err) {
-        console.warn(
-          "DocumentReader: Error getting cursor position via CodeMirror",
-          err
-        );
-      }
-    }
-
-    // Fallback to selection API
-    try {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        if (range) {
-          // Simple implementation - just counts newlines before cursor
-          const preContent = range.startContainer.textContent || "";
-          const lines = preContent.split("\n");
-          return {
-            line: lines.length - 1,
-            character: lines[lines.length - 1].length,
-          };
-        }
-      }
-    } catch (error) {
-      console.error("Error getting cursor position:", error);
-    }
-
-    // Default fallback position
-    return { line: 0, character: 0 };
+  // Expose the CodeMirror instance for cursor tracking components to use
+  getCodeMirrorInstance(): any {
+    return this.codeMirrorInstance;
   }
 }
 
