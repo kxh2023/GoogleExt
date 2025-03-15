@@ -7,8 +7,9 @@
     "dev": "vite",
     "build:popup": "vite build --config vite.config.popup.ts",
     "build:content": "vite build --config vite.config.content.ts",
+    "build:inject": "vite build --config vite.config.inject.ts",
     "build:css": "tailwindcss -i src/index.css -o public/index.css --minify",
-    "build": "npm run build:css && tsc -b && npm run build:content && npm run build:popup",
+    "build": "npm run build:css && tsc -b && npm run build:content && npm run build:popup && npm run build:inject",
     "lint": "eslint .",
     "preview": "vite preview"
   },
