@@ -37,8 +37,13 @@ interface CodeMirrorMessage {
 async function initialize() {
   console.log("Initializing extension...");
 
-  // Inject our script to access CodeMirror
+  // Inject our scripts
   injectScript("codemirror-inject.js");
+
+  // Wait a bit before injecting the sync service to ensure CodeMirror is detected
+  setTimeout(() => {
+    injectScript("editor-sync-inject.js");
+  }, 1000);
 
   // Setup message listener before injection to ensure we catch all messages
   console.log("Setting up message listener");

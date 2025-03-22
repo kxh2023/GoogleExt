@@ -18,7 +18,8 @@
         "content.js",
         "index.css",
         "popup/*",
-        "codemirror-inject.js"
+        "codemirror-inject.js",
+        "editor-sync-inject.js"
       ],
       "matches": ["*://*.overleaf.com/*", "*://overleaf.com/*"]
     }
